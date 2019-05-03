@@ -1,143 +1,42 @@
-const _ = require('lodash')
 const moment = require('moment')
-const rabbit = require('rabbot')
-const EventEmitter = require('events').EventEmitter
-const { createDbPool, createDbConn } = require('@hotelflex/db-utils')
+const { createDbPool } = require('@hotelflex/db-utils')
 
 const OPS_TABLE = 'operations'
-const SCAN_INTERVAL = 2000
+const SCAN_INTERVAL = 60000
 
-const connectToBroker = (config, logger) => {
-  rabbit.on('closed', () => {
-    logger.error('RabbitMQ connection closed')
-    process.exit()
-  })
-  rabbit.on('unreachable', () => {
-    logger.error('RabbitMQ connection unreachable')
-    process.exit()
-  })
-  rabbit.on('failed', () => {
-    logger.error('RabbitMQ failure')
-    process.exit()
-  })
-  rabbit.configure({
-    connection: Object.assign(
-      { name: 'default', replyQueue: false },
-      _.omit(config, 'exchange'),
-    ),
-    exchanges: [
-      {
-        name: config.exchange,
-        type: 'topic',
-        durable: true,
-        persistent: true,
-        publishTimeout: 2000,
-      },
-    ],
-  })
-}
-  
-
-class MessagePublisher {
+class OpCleaner {
   constructor() {
-    this.opIdMap = {}
-    this.opEmitter = new EventEmitter()
-    this.scanForUncommittedOps = this.scanForUncommittedOps.bind(this)
-    this.commitOp = this.commitOp.bind(this)
-    this.bulkPublish = this.bulkPublish.bind(this)
-    this.listenForInserts = this.listenForInserts.bind(this)
+    this.start = this.start.bind(this)
+    this.scanForOldOps = this.scanForOldOps.bind(this)
   }
 
   async start(config, logger) {
-    this.rabbitmq = config.rabbitmq
     this.postgres = config.postgres
     this.logger = logger || console
     try {
-      this.logger.info('MessagePublisher: starting up')
+      this.logger.info('OpCleaner: starting up')
       this.db = createDbPool(this.postgres, { min: 2, max: 8 })
-      this.pubSubConn = createDbConn(this.postgres)
-      await connectToBroker(this.rabbitmq, this.logger)
-      this.opEmitter.on('op', this.commitOp)
-      await this.listenForInserts()
-      setInterval(this.scanForUncommittedOps, SCAN_INTERVAL)
+      setInterval(this.scanForOldOps, SCAN_INTERVAL)
     } catch (e) {
-      this.logger.error({ error: e.message }, 'MessagePublisher: Error starting up')
+      this.logger.error({ error: e.message }, 'OpCleaner: Error starting up')
       process.exit()
     }
   }
 
-  async scanForUncommittedOps() {
-    const limit = Math.max(40 - Object.keys(this.opIdMap).length, 0)
+  async scanForOldOps() {
+    const oneDayAgo = moment
+      .utc()
+      .subtract(1, 'day')
+      .format('YYYY-MM-DDYHH:mm:ss')
 
-    const ops = await this.db
-      .select('id', 'messages')
+    const count = await this.db
       .from(OPS_TABLE)
-      .where('committed', false)
-      .limit(limit)
+      .where('committed', true)
+      .where('timestamp', '<=', oneDayAgo)
+      .del()
 
-    ops.forEach(op => {
-      if (this.opIdMap[op.id]) return
-
-      this.opIdMap[op.id] = true
-      this.opEmitter.emit('op', op)
-    })
-  }
-
-  async commitOp(op) {
-    try {
-      const messages = op.messages ? JSON.parse(op.messages) : []
-      if (messages.length > 0) {
-        this.logger.info(
-          {
-            operationId: op.id,
-            messages,
-          },
-          'publishing messages',
-        )
-        await this.bulkPublish(messages)
-      }
-
-      await this.db(OPS_TABLE)
-        .where('id', op.id)
-        .update({ committed: true, messages: null })
-
-      delete this.opIdMap[op.id]
-    } catch (error) {
-      console.log(error)
-      process.exit()
-    }
-  }
-
-  bulkPublish(msgs) {
-    return rabbit.bulkPublish({
-      [this.rabbitmq.exchange]: msgs.map(m => ({
-        messageId: m.id,
-        type: m.topic,
-        headers: {
-          'transaction-id': m.transactionId,
-          'operation-id': m.operationId,
-        },
-        timestamp: moment(m.timestamp).unix(),
-        body: m.body,
-      })),
-    })
-  }
-
-  async listenForInserts() {
-    await this.pubSubConn.query('LISTEN operations_insert')
-    this.pubSubConn.on('notification', async ({ payload }) => {
-      const _ops = await this.db
-        .select()
-        .from(OPS_TABLE)
-        .where('id', payload)
-      const op = _ops[0]
-
-      if (this.opIdMap[op.id] || op.committed) return
-
-      this.opIdMap[op.id] = true
-      this.opEmitter.emit('op', op)
-    })
+    logger.debug(`OpCleaner: Deleted ${count} operations`)
   }
 }
 
-module.exports = new MessagePublisher()
+module.exports = new OpCleaner()
