@@ -24,18 +24,25 @@ class OpCleaner {
   }
 
   async scanForOldOps() {
-    const oneDayAgo = moment
-      .utc()
-      .subtract(1, 'day')
-      .format('YYYY-MM-DDYHH:mm:ss')
+    try {
+      const oneDayAgo = moment
+        .utc()
+        .subtract(1, 'day')
+        .format('YYYY-MM-DDYHH:mm:ss')
 
-    const count = await this.db
-      .from(OPS_TABLE)
-      .where('committed', true)
-      .where('timestamp', '<=', oneDayAgo)
-      .del()
+      const count = await this.db
+        .from(OPS_TABLE)
+        .where('committed', true)
+        .where('timestamp', '<=', oneDayAgo)
+        .del()
 
-    logger.debug(`OpCleaner: Deleted ${count} operations`)
+      this.logger.debug(`OpCleaner: Deleted ${count} operations`)
+    } catch(e) {
+      this.logger.error(
+        { error: error.message },
+        'OpCleaner: Error deleting operations'
+      )
+    }
   }
 }
 
