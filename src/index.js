@@ -6,6 +6,7 @@ const SCAN_INTERVAL = 60000
 
 class OpCleaner {
   constructor() {
+    this.isRunning = false
     this.start = this.start.bind(this)
     this.scanForOldOps = this.scanForOldOps.bind(this)
   }
@@ -17,6 +18,7 @@ class OpCleaner {
       this.logger.info('OpCleaner: starting up')
       this.db = createDbPool(this.postgres, { min: 2, max: 8 })
       setInterval(this.scanForOldOps, SCAN_INTERVAL)
+      this.scanForOldOps()
     } catch (e) {
       this.logger.error({ error: e.message }, 'OpCleaner: Error starting up')
       process.exit()
@@ -24,11 +26,13 @@ class OpCleaner {
   }
 
   async scanForOldOps() {
+    if(this.isRunning) return
     try {
+      this.isRunning = true
       const oneDayAgo = moment
         .utc()
         .subtract(1, 'day')
-        .format('YYYY-MM-DDYHH:mm:ss')
+        .format('YYYY-MM-DDTHH:mm:ss')
 
       const count = await this.db
         .from(OPS_TABLE)
@@ -38,11 +42,13 @@ class OpCleaner {
         .del()
 
       this.logger.debug(`OpCleaner: Deleted ${count} operations`)
-    } catch(e) {
+    } catch(error) {
       this.logger.error(
         { error: error.message },
         'OpCleaner: Error deleting operations'
       )
+    } finally {
+      this.isRunning = false
     }
   }
 }
