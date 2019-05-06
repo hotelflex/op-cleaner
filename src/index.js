@@ -34,6 +34,7 @@ class OpCleaner {
         .from(OPS_TABLE)
         .where('committed', true)
         .where('timestamp', '<=', oneDayAgo)
+        .limit(50000)
         .del()
 
       this.logger.debug(`OpCleaner: Deleted ${count} operations`)
