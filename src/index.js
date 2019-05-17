@@ -13,6 +13,7 @@ class OpCleaner {
 
   async start(config, logger) {
     this.postgres = config.postgres
+    this.deleteAfter = config.deleteAfter
     this.logger = logger || console
     try {
       this.logger.info('OpCleaner: starting up')
@@ -29,15 +30,17 @@ class OpCleaner {
     if(this.isRunning) return
     try {
       this.isRunning = true
-      const oneDayAgo = moment
+      const deleteAfter = this.deleteAfter || 24
+      const timestamp = moment
         .utc()
-        .subtract(1, 'day')
+        .subtract(deleteAfter, 'hours')
         .format('YYYY-MM-DDTHH:mm:ss')
+  
 
       const count = await this.db
         .from(OPS_TABLE)
         .where('committed', true)
-        .where('timestamp', '<=', oneDayAgo)
+        .where('timestamp', '<=', timestamp)
         .limit(50000)
         .del()
 
