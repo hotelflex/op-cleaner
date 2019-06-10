@@ -17,7 +17,7 @@ class OpCleaner {
     this.logger = logger || console
     try {
       this.logger.info('OpCleaner: starting up')
-      this.db = createDbPool(this.postgres, { min: 2, max: 8 })
+      this.db = createDbPool(this.postgres, { min: 1, max: 2 })
       setInterval(this.scanForOldOps, SCAN_INTERVAL)
       this.scanForOldOps()
     } catch (e) {
@@ -44,7 +44,7 @@ class OpCleaner {
         .limit(50000)
         .del()
 
-      this.logger.debug(`OpCleaner: Deleted ${count} operations`)
+      //this.logger.debug(`OpCleaner: Deleted ${count} operations`)
     } catch(error) {
       this.logger.error(
         { error: error.message },
